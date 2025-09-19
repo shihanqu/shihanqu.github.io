@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Advanced Flight Tracker</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+
+        .map-controls { position: absolute; top: 10px; left: 50px; z-index: 1000; }
+        .map-controls button {
+            padding: 10px 15px; font-size: 14px; background-color: white;
+            border: 2px solid #ccc; border-radius: 5px; cursor: pointer; margin-right: 5px;
+        }
+        .map-controls button:hover { background-color: #f4f4f4; }
+
+        #notification-banner {
+            display: none; position: absolute; top: 0; left: 0; width: 100%;
+            background-color: #ffc107; color: black; text-align: center;
+            padding: 10px 0; z-index: 2001; font-weight: bold;
+        }
+
+        .airplane-icon {
+            width: 40px; height: 40px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%23FFC700' stroke='black' stroke-width='3' d='M50.0 0.0 L50.2 0.0 L50.5 0.2 L51.1 0.7 L52.0 2.2 L53.3 5.3 L54.2 8.9 L54.7 13.4 L54.7 33.2 L55.3 34.2 L56.2 35.3 L62.1 39.3 L61.8 37.3 L61.8 34.4 L62.1 31.9 L62.3 31.5 L67.8 31.5 L67.9 31.9 L68.3 34.4 L68.3 37.3 L67.9 39.9 L67.2 39.9 L66.5 42.2 L96.2 61.8 L96.6 62.7 L96.7 65.4 L80.4 59.8 L80.3 60.9 L80.1 61.2 L79.9 60.9 L79.7 59.6 L72.1 57.1 L71.9 58.2 L71.7 58.5 L71.6 58.2 L71.4 56.9 L66.8 55.4 L63.6 55.4 L63.4 56.7 L63.2 57.1 L63.0 56.7 L62.9 55.4 L54.7 55.4 L54.7 74.6 L54.3 78.1 L53.1 85.0 L66.8 96.2 L67.0 97.5 L67.0 98.7 L66.8 100.0 L51.4 94.4 L51.1 95.1 L50.2 98.4 L49.8 98.4 L48.9 95.1 L48.6 94.4 L33.2 100.0 L33.0 98.7 L33.0 97.5 L33.2 96.2 L46.9 85.0 L45.7 78.1 L45.3 74.6 L45.3 55.4 L37.1 55.4 L37.0 56.7 L36.8 57.1 L36.6 56.7 L36.4 55.4 L33.2 55.4 L28.6 56.9 L28.4 58.2 L28.3 58.5 L28.1 58.2 L27.9 57.1 L20.3 59.6 L20.1 60.9 L19.9 61.2 L19.7 60.9 L19.6 59.8 L3.3 65.4 L3.4 62.7 L3.8 61.8 L33.5 42.2 L32.8 39.9 L32.1 39.9 L31.7 37.3 L31.7 34.4 L32.1 31.9 L32.2 31.5 L37.7 31.5 L37.9 31.9 L38.2 34.4 L38.2 37.3 L37.9 39.3 L43.8 35.3 L44.7 34.2 L45.3 33.2 L45.3 13.4 L45.8 8.9 L46.7 5.3 L48.0 2.2 L48.9 0.7 L49.5 0.2 L49.8 0.0 Z'/%3E%3C/svg%3E");
+            background-size: contain; background-repeat: no-repeat; transition: transform 0.5s linear;
+        }
+
+        .flight-info-tooltip { background-color: white; border: 0; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); padding: 12px; white-space: nowrap; }
+        .flight-info-tooltip .flight-model { font-weight: bold; color: #111; }
+        .flight-info-tooltip .flight-number-line { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+        .flight-info-tooltip .flight-route { color: #444; font-size: 0.9em; }
+        .flight-info-tooltip .flag-emoji { font-size: 18px; line-height: 1; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="map-controls">
+    <button id="locate-btn">Detect My Location</button>
+    <button id="pause-fetch-btn">Pause Auto Fetch</button>
+</div>
+<div id="notification-banner"></div>
+
+<script>
+    const numberOfPlanesToShow = 3;
+    let homeCoordinates = L.latLng(51.478431, -0.113217);
+    const map = L.map('map').setView(homeCoordinates, 11);
+    let homeMarker = L.marker(homeCoordinates).addTo(map).bindPopup("Home Location");
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    const flightMarkers = {};
+    const detailsCache = {}; // Cache for ADSBdb data
+    let isAutoFetchPaused = false;
+    let fetchIntervalId = null;
+    const pauseFetchBtn = document.getElementById('pause-fetch-btn');
+
+    // --- Helper and API Functions ---
+    const countryToCode = { "United Kingdom": "GB", "Germany": "DE", "France": "FR", "Spain": "ES", "Ireland": "IE", "Netherlands": "NL", "United States": "US", "Canada": "CA", "Switzerland": "CH", "Italy": "IT", "Portugal": "PT", "Belgium": "BE", "Turkey": "TR", "Poland": "PL", "Luxembourg": "LU", "Austria": "AT", "Denmark": "DK", "Sweden": "SE", "Norway": "NO", "Finland": "FI", "Greece": "GR", "Qatar": "QA", "United Arab Emirates": "AE"};
+    function countryCodeToEmoji(countryCode) {
+        if (!countryCode || countryCode.length !== 2) return '✈️';
+        const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt());
+        return String.fromCodePoint(...codePoints);
+    }
+
+    function showNotification(message, duration = 5000) {
+        const banner = document.getElementById('notification-banner');
+        banner.textContent = message;
+        banner.style.display = 'block';
+        setTimeout(() => { banner.style.display = 'none'; }, duration);
+    }
+
+    async function getFlightDetails(icao24, callsign) {
+        if (detailsCache[icao24]) return detailsCache[icao24];
+        
+        const defaultDetails = { model: 'Aircraft', route: { origin: 'N/A', dest: 'N/A' } };
+        detailsCache[icao24] = defaultDetails; // Cache immediately to prevent re-fetching
+
+        try {
+            const url = `https://api.adsbdb.com/v0/aircraft/${icao24}?callsign=${callsign.trim()}`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`ADSBdb API request failed for ${icao24}`);
+            
+            const data = await response.json();
+            if (data.response && data.response.aircraft && data.response.flightroute) {
+                const ac = data.response.aircraft;
+                const fr = data.response.flightroute;
+                const details = {
+                    model: ac.type || ac.manufacturer || 'Aircraft',
+                    route: {
+                        origin: fr.origin?.icao_code || 'N/A',
+                        dest: fr.destination?.icao_code || 'N/A'
+                    }
+                };
+                detailsCache[icao24] = details; // Update cache with real data
+                return details;
+            }
+        } catch (e) {
+            console.error(e);
+        }
+        return defaultDetails;
+    }
+
+    // --- Main Fetch and Update Function ---
+    async function fetchFlightData() {
+        const bounds = map.getBounds().pad(0.5);
+        const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${bounds.getSouth()}&lomin=${bounds.getWest()}&lamax=${bounds.getNorth()}&lomax=${bounds.getEast()}`;
+        
+        try {
+            const response = await fetch(openSkyUrl);
+            if (response.status === 429) {
+                showNotification('Rate limit reached. Auto-fetch paused.');
+                pauseAutoFetch();
+                throw new Error('OpenSky Network rate limit reached (429)');
+            }
+            if (!response.ok) throw new Error('OpenSky Network response failed');
+
+            const data = await response.json();
+            if (!data || !data.states) return;
+
+            const flightsWithDistance = data.states.filter(f => f[5] && f[6] && !f[8]).map(f => ({ flight: f, distance: homeCoordinates.distanceTo([f[6], f[5]]) }));
+            flightsWithDistance.sort((a, b) => a.distance - b.distance);
+            const closestFlights = flightsWithDistance.slice(0, numberOfPlanesToShow);
+            const closestIcaos = new Set(closestFlights.map(f => f.flight[0]));
+
+            for (const { flight, distance } of closestFlights) {
+                const icao24 = flight[0];
+                const callsign = flight[1] || 'N/A';
+                const origin_country = flight[2];
+                const position = L.latLng(flight[6], flight[5]);
+                const true_track = flight[10];
+                const time = new Date(flight[3] * 1000).toLocaleTimeString();
+                const altitude = flight[7] ? `${Math.round(flight[7])} m` : 'N/A';
+                const speed = flight[9] ? `${Math.round(flight[9] * 3.6)} km/h` : 'N/A';
+                
+                const details = await getFlightDetails(icao24, callsign);
+                
+                const countryCode = countryToCode[origin_country] || null;
+                const flagEmoji = countryCodeToEmoji(countryCode);
+                const distanceKm = (distance / 1000).toFixed(1);
+
+                const tooltipContent = `<div class="flight-model">${details.model}</div><div class="flight-number-line"><span class="flag-emoji">${flagEmoji}</span><span>${callsign}</span></div><div class="flight-route">${details.route.origin} > ${details.route.dest} (${distanceKm} km)</div>`;
+                const popupContent = `<b>${details.model} (${callsign})</b><hr><b>Route:</b> ${details.route.origin} > ${details.route.dest}<br><b>Speed:</b> ${speed}<br><b>Altitude:</b> ${altitude}<br><b>Last Update:</b> ${time}`;
+                
+                if (flightMarkers[icao24]) {
+                    flightMarkers[icao24].marker.setLatLng(position);
+                    flightMarkers[icao24].marker.getTooltip().setContent(tooltipContent);
+                    flightMarkers[icao24].marker.getPopup().setContent(popupContent);
+                    const iconEl = flightMarkers[icao24].marker.getElement().querySelector('.airplane-icon');
+                    if (iconEl && true_track !== null) iconEl.style.transform = `rotate(${true_track}deg)`;
+                    flightMarkers[icao24].history.push(position);
+                    if (flightMarkers[icao24].history.length > 100) flightMarkers[icao24].history.shift();
+                    flightMarkers[icao24].path.setLatLngs(flightMarkers[icao24].history);
+                } else {
+                    const icon = L.divIcon({ className: 'custom-div-icon', html: `<div class="airplane-icon" style="transform: rotate(${true_track || 0}deg);"></div>`, iconSize: [40, 40], iconAnchor: [20, 20] });
+                    const marker = L.marker(position, { icon }).addTo(map);
+                    marker.bindTooltip(tooltipContent, { permanent: true, direction: 'bottom', offset: L.point(0, 15), className: 'flight-info-tooltip' });
+                    marker.bindPopup(popupContent);
+                    const path = L.polyline([position], { color: 'rgba(30, 144, 255, 0.7)', weight: 2 }).addTo(map);
+                    flightMarkers[icao24] = { marker, path, history: [position] };
+                }
+            }
+            
+            for (const icao in flightMarkers) {
+                if (!closestIcaos.has(icao)) {
+                    map.removeLayer(flightMarkers[icao].marker);
+                    map.removeLayer(flightMarkers[icao].path);
+                    delete flightMarkers[icao];
+                }
+            }
+        } catch (error) { console.error('Error during main fetch/update:', error); }
+    }
+    
+    // --- UI and Control Functions ---
+    function pauseAutoFetch() {
+        if (!isAutoFetchPaused) {
+            clearInterval(fetchIntervalId);
+            fetchIntervalId = null;
+            isAutoFetchPaused = true;
+            pauseFetchBtn.textContent = 'Continue Auto Fetch';
+        }
+    }
+
+    function continueAutoFetch() {
+        if (isAutoFetchPaused) {
+            isAutoFetchPaused = false;
+            pauseFetchBtn.textContent = 'Pause Auto Fetch';
+            fetchFlightData();
+            fetchIntervalId = setInterval(fetchFlightData, 15000);
+        }
+    }
+
+    pauseFetchBtn.addEventListener('click', () => {
+        isAutoFetchPaused ? continueAutoFetch() : pauseAutoFetch();
+    });
+
+    document.getElementById('locate-btn').addEventListener('click', () => {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                homeCoordinates = L.latLng(position.coords.latitude, position.coords.longitude);
+                map.setView(homeCoordinates, 11);
+                if (homeMarker) map.removeLayer(homeMarker);
+                homeMarker = L.marker(homeCoordinates).addTo(map).bindPopup("Your Location").openPopup();
+                for (const icao in flightMarkers) {
+                    map.removeLayer(flightMarkers[icao].marker);
+                    map.removeLayer(flightMarkers[icao].path);
+                    delete flightMarkers[icao];
+                }
+                fetchFlightData();
+            },
+            (error) => { alert(`Could not get your location: ${error.message}`); }
+        );
+    });
+
+    // --- Application Start ---
+    fetchFlightData();
+    fetchIntervalId = setInterval(fetchFlightData, 15000);
+
+</script>
+
+</body>
+</html>
